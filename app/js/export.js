@@ -1,7 +1,7 @@
 // Real ZIP / PDF generation (JSZip + pdf-lib, vendored). Packages are rebuilt
 // from their frozen snapshot with fixed timestamps, so a package ID always
 // yields the same content.
-import { fileUrl, PRECONFIRMED, ROUTES } from './data.js';
+import { fileUrl, ROUTES } from './data.js';
 import { getSources } from './store.js';
 
 const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
@@ -80,7 +80,7 @@ function reviewRecord(s, at, docId) {
       { rows: [['Anforderung', 'MDR Anhang I, Nr. 20.1 (Demo-Zuordnung)'], ['Risiko', 'R-04 Unbeabsichtigtes Absenken'], ['Schutzmaßnahme', 'Ausreichendes Halteverhalten'], ['Prüfanweisung', 'PA-04 v1.0']] },
       { h: 'Angenommener Nachweis', rows: [['Bericht', `${s.report.id} v${s.report.version}`], ['Konfiguration', 'R2 / Hubantrieb B (MH-B)'], ['Dokumentstatus', s.report.document_status], ['Ergebnis', s.report.result]] },
       { h: 'QM-Bewertung', rows: [['Status', s.report.review.status], ['Durch', `${s.report.review.by} (${s.report.review.role})`], ['Zeitpunkt', fmt(s.report.review.at)], ['Begründung', s.report.review.reason]] },
-      { h: 'Abweichungen', list: s.deviations.length ? s.deviations.map(d => `${d.id}: ${d.status}; Korrektur: ${d.correction || '–'}; Wirksamkeit: ${d.effectiveness || '–'}`) : ['keine'] },
+      { h: 'Abweichungen', list: s.deviations.length ? s.deviations.map(d => `${d.id}: ${d.status}; Nacharbeit: ${d.rework || '–'}; Korrektur: ${d.correction || '–'}; Wirksamkeit: ${d.effectiveness || '–'}`) : ['keine'] },
       { warn: 'Geschlossen ist nur der Demo-Nachweispunkt R-04 – nicht alle Produktrisiken. Keine Serienfreigabe.' },
     ],
   });
@@ -95,8 +95,8 @@ function matrix(s, at, docId) {
         ['Prüfanweisung', 'PA-04'], ['Erwartet', 'R2 / B'], ['Nachweis', s.report ? `${s.report.id} v${s.report.version} – ${s.report.revision || 'R2'}/B, ${s.report.document_status}, ${s.report.result}` : 'fehlt'],
         ['Status', s.risk.status === 'closed' ? `geschlossen durch ${s.risk.closedBy}` : 'offen']] },
       { h: 'Historischer Bezug', p: 'PB-17 v1.0 belegt ausschließlich R1/A und ist für R2/B nicht verwendbar (nicht im Paket).' },
-      { h: 'Übrige Pflichtpunkte', list: PRECONFIRMED.map(p => `${p.id}: ${p.label} – VORBESTÄTIGT NUR FÜR DEN SYNTHETISCHEN DEMOFALL`) },
-      { warn: 'Vorbestätigte Punkte sind keine tatsächliche Konformitätsbewertung.' },
+      { h: 'Regelregister MDR Anhang I (23 Abschnitte)', list: s.register.map(r => `Nr. ${r.no} ${r.title}: ${r.status === 'nachweis' ? 'Nachweis über R-04 (Nr. 20.1)' : r.status === 'nicht anwendbar' ? `nicht anwendbar – ${r.reason} (bestätigt: ${r.by})` : r.status === 'vorbestätigt' ? 'VORBESTÄTIGT NUR FÜR DEN SYNTHETISCHEN DEMOFALL' : 'offen'}`) },
+      { warn: 'Vorbestätigte Punkte sind keine tatsächliche Konformitätsbewertung. Durchgängig bis zum Prüfnachweis verknüpft ist nur Nr. 20.1.' },
     ],
   });
 }
@@ -124,9 +124,9 @@ function indexPdf(pkg, files, excluded) {
     title: `Paketindex ${pkg.id} – Digitale Produktakte UL-01 R2/B`, docId: `${pkg.id}-INDEX`, at: pkg.at,
     watermark: pkg.sourceLinkOnly ? 'QUELLLINK-PROTOTYP' : null,
     blocks: [
-      { rows: [['Paket-ID', pkg.id], ['Snapshot', pkg.hash], ['Eingefroren', fmt(pkg.at)], ['Erstellt durch', `${pkg.by} (QM)`], ['Empfänger', 'BeispielMed Systeme GmbH (fiktiv)'], ['Produkt', 'UL-01 Untersuchungsliege / Standard / R2 / Hubantrieb B']] },
+      { rows: [['Paket-ID', pkg.id], ['Snapshot', pkg.hash], ['Eingefroren', fmt(pkg.at)], ['Erstellt durch', `${pkg.by} (QM)`], ['Empfänger', pkg.recipient || 'BeispielMed Systeme GmbH (fiktiv)'], ['Produkt / Revision', 'UL-01 Untersuchungsliege / Standard / R2 / Hubantrieb B']] },
       ...(pkg.sourceLinkOnly ? [{ warn: `QUELLLINK-PROTOTYP: Zertifikats-PDF lokal nicht vorhanden. Quelle nur als Link: ${s.cert.url}. KEINE VOLLSTÄNDIGE AKTE.` }] : []),
-      { h: 'Enthaltene Dateien', list: files },
+      { h: 'Enthaltene Dateien (Datei | Dokument-ID | Version | Zweck)', list: files.map(f => `${f.name} | ${f.docId} | ${f.version} | ${f.purpose}`) },
       { h: 'Bewusst nicht enthalten', list: excluded },
       { h: 'Partner / QMS-Quelle', p: `Ergo-Tec GmbH, ${s.partner.certId}; Geltungsbereich „${s.partner.scope}“; bestätigt durch ${s.partner.confirmedBy}. Quelle: ${s.cert.url}${s.cert.mode === 'local' ? ' (lokal, Seiten 1 und 3)' : ''}. Das Zertifikat belegt keine Produktsicherheit und schließt R-04 nicht.` },
       { h: 'Hinweise', list: [
@@ -145,24 +145,24 @@ export async function buildFormalZip(pkg) {
   const at = pkg.at;
   const add = (name, data) => zip.file(name, data, zipOpts(at));
   const files = [];
-  const put = (name, data, label) => { add(name, data); files.push(`${name} – ${label}`); };
+  const put = (name, data, docId, version, purpose) => { add(name, data); files.push({ name, docId, version, purpose }); };
 
   const src = getSources();
   const bomRaw = await fetch(fileUrl('data/BOM_R2.csv'), { cache: 'no-store' }).then(r => r.text());
-  put('01_BOM_UL-01_R2.csv', bomRaw, 'Stückliste R2 (geplant), Pos. 020 MH-B');
-  put('02_R-04_Risikomanagementauszug_v1.0.pdf', await fetchBytes('documents/R-04_Risikomanagementauszug.pdf'), 'Risikoauszug R-04');
-  put('02b_R-04_QM-Bewertungsvermerk.pdf', await reviewRecord(s, at, `${pkg.id}-R04REV`), 'dokumentierte QM-Bewertung');
-  put('03_PA-04_Pruefanweisung_v1.0.pdf', await fetchBytes('documents/PA-04_Pruefanweisung.pdf'), 'Prüfanweisung');
-  put(`04_${s.report.id}_v${s.report.version}_R2-B_Endfassung.pdf`, await fetchBytes(s.report.file), `angenommener Bericht (${s.report.result})`);
-  if (s.cert.mode === 'local') put('05_QMS-Quelle_Ergo-Tec_Zertifikate.pdf', await fetchBytes(s.cert.file), 'öffentliche Zertifikatsquelle (S. 1 ISO 9001, S. 3 ISO 13485)');
-  put('06_Anforderungsmatrix_R-04.pdf', await matrix(s, at, `${pkg.id}-MATRIX`), 'Anforderungsmatrix');
-  put('07_Entscheidungsprotokoll_BeispielMed.pdf', await decisionLog(pkg, at, `${pkg.id}-LOG`), 'empfängerspezifisches Entscheidungsprotokoll');
-  if (s.supplements.length) put('08_QM-Stellungnahmen.pdf', await supplementsPdf(s, at, `${pkg.id}-QMST`), 'QM-Stellungnahmen');
+  put('01_BOM_UL-01_R2.csv', bomRaw, 'BOM-UL-01-R2', 'R2 (geplant)', 'Stückliste R2, Pos. 020 MH-B');
+  put('02_R-04_Risikomanagementauszug_v1.0.pdf', await fetchBytes('documents/R-04_Risikomanagementauszug.pdf'), 'R-04', '1.0', 'Risikoauszug: Gefährdung, Schutzmaßnahme, Konfiguration');
+  put('02b_R-04_QM-Bewertungsvermerk.pdf', await reviewRecord(s, at, `${pkg.id}-R04REV`), `${pkg.id}-R04REV`, pkg.hash, 'dokumentierte QM-Bewertung des Nachweises');
+  put('03_PA-04_Pruefanweisung_v1.0.pdf', await fetchBytes('documents/PA-04_Pruefanweisung.pdf'), 'PA-04', '1.0', 'Prüfanweisung Halteversuch');
+  put(`04_${s.report.id}_v${s.report.version}_R2-B_Endfassung.pdf`, await fetchBytes(s.report.file), s.report.id, s.report.version, `angenommener Prüfbericht R2/B (${s.report.result})`);
+  if (s.cert.mode === 'local') put('05_QMS-Quelle_Ergo-Tec_Zertifikate.pdf', await fetchBytes(s.cert.file), `${s.partner.certId} / Q-25-23375`, '2025–2028', 'QMS-Nachweis Partner (S. 1 ISO 9001, S. 3 ISO 13485)');
+  put('06_Anforderungsmatrix_R-04.pdf', await matrix(s, at, `${pkg.id}-MATRIX`), `${pkg.id}-MATRIX`, pkg.hash, 'Anforderungsmatrix und Regelregister MDR Anhang I');
+  put('07_Entscheidungsprotokoll_BeispielMed.pdf', await decisionLog(pkg, at, `${pkg.id}-LOG`), `${pkg.id}-LOG`, pkg.hash, 'empfängerspezifisches Entscheidungsprotokoll');
+  if (s.supplements.length) put('08_QM-Stellungnahmen.pdf', await supplementsPdf(s, at, `${pkg.id}-QMST`), `${pkg.id}-QMST`, pkg.hash, 'QM-Stellungnahmen zu OEM-Rückfragen');
 
   const excluded = ['PB-18 v0.1 (Entwurf)', 'PB-18 v1.0 (nicht bestanden / nicht angenommen)', 'PB-17 v1.0 (belegt nur R1/A)', 'Interne Notizen, Rollenwechsel, Testschalter', 'PCN-01 / DB-B (Eingangsdokumente, kein Nachweis)'];
   if (s.cert.mode !== 'local') excluded.push(`Zertifikats-PDF (lokal nicht vorhanden – nur Link: ${src.certUrl})`);
   add(`00_Paketindex_${pkg.id}.pdf`, await indexPdf(pkg, files, excluded));
-  add('manifest.json', JSON.stringify({ package: pkg.id, snapshot: pkg.hash, frozen_at: pkg.at, demo_only: true, source_link_only: !!pkg.sourceLinkOnly, files: files.map(f => f.split(' – ')[0]) }, null, 2));
+  add('manifest.json', JSON.stringify({ package: pkg.id, snapshot: pkg.hash, frozen_at: pkg.at, demo_only: true, source_link_only: !!pkg.sourceLinkOnly, recipient: pkg.recipient, files }, null, 2));
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
 }
 

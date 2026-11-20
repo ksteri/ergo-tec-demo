@@ -1,8 +1,9 @@
 // Screen rendering. Pure functions of (state, ui, sources) -> HTML strings.
-import { PERSONS, ROLE_LABEL, ROUTES, PRECONFIRMED } from './data.js';
+import { PERSONS, ROLE_LABEL, ROUTES, EXTERNAL_KIND, SCENARIOS } from './data.js';
 import {
   getState, getUi, getSources, guards, person, assessReport, reportUid, seedReports, evalPartner, COMPANIES, ACTIVITIES,
   openDeviations, acceptedReport, currentPackage, openQuestions, formalBlockers, releaseBlockers, nextAction, certAvailable, gapList,
+  registerRows, openExclusions, worklist, routeLabel, evidenceSnapshot, hash, addDays,
 } from './store.js';
 import { fmt } from './export.js';
 
@@ -46,12 +47,14 @@ export function header() {
     <div class="ctx">
       <div class="ctx-item"><small>Projekt</small><strong>UL-01 Untersuchungsliege · Standard</strong></div>
       <div class="ctx-item"><small>Revision</small><strong>${rev}</strong></div>
+      <div class="ctx-item"><small>Testdatensatz</small><strong>${esc(SCENARIOS[s.scenario].short)}</strong></div>
       <div class="ctx-item role"><small>Demorolle (${ROLE_LABEL[p.role]})</small>
         <select id="role-select" aria-label="Demorolle">${opts}</select></div>
     </div>
     <button class="next" data-act="next" title="Rolle wechseln und zur Aktion springen">
       <small>Nächster Schritt · ${esc(n.role)}${n.who && n.who !== p.id ? ' · Klick wechselt die Rolle' : ''}</small><strong>${esc(n.text)} →</strong></button>
     <div class="tools">
+      <button class="btn ghost sm" data-act="toggle-worklist" title="Offene Aufgaben der aktuellen Demorolle">Arbeitsliste (${worklist().filter(w => w.who === p.id).length})</button>
       <button class="btn ghost sm" data-act="toggle-audit">Verlauf (${s.audit.length})</button>
       ${ui.confirmReset
         ? `<span class="confirm-reset">Nur die Demo-Daten dieses Browsers löschen? <button class="btn secondary sm danger" data-act="reset-confirm">Zurücksetzen</button> <button class="btn ghost sm" data-act="reset-cancel">Abbrechen</button></span>`
@@ -97,6 +100,19 @@ export function auditDrawer() {
   return `<div class="drawer"><header><h3>Verlauf / Audit-Trail</h3><button class="btn ghost sm" data-act="toggle-audit">Schließen</button></header>${timeline()}</div>`;
 }
 
+export function worklistDrawer() {
+  if (!getUi().worklistOpen) return '';
+  const p = person(), all = worklist();
+  const mine = all.filter(w => w.who === p.id);
+  const others = PERSONS.filter(x => x.id !== p.id).map(x => [x, all.filter(w => w.who === x.id).length]).filter(([, n]) => n);
+  const rows = mine.map(w => `<tr><td><strong>${esc(w.next)}</strong><div class="muted small">${esc(w.reason)}</div></td><td>${esc(w.project)}<br>${esc(w.revision)}</td><td>${esc(w.source)}</td><td>${esc(w.due)}</td>
+    <td><button class="btn secondary sm" data-act="open-work" data-screen="${w.screen}" data-card="${esc(w.card)}">Öffnen</button></td></tr>`).join('');
+  return `<div class="drawer wide"><header><h3>Arbeitsliste · ${esc(p.name)}</h3><button class="btn ghost sm" data-act="toggle-worklist">Schließen</button></header>
+    <p class="muted small">Jede Übergabe landet beim Empfänger: Projekt, Revision, Grund, Quelle, Fälligkeit und nächste Aktion. Demorolle wechseln, um andere Listen zu sehen.</p>
+    ${mine.length ? `<table class="tbl"><thead><tr><th>Nächste Aktion / Grund</th><th>Projekt / Revision</th><th>Quelle</th><th>Fällig</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted">Keine offenen Aufgaben für diese Rolle.</p>'}
+    ${others.length ? `<p class="muted small">Offen bei anderen: ${others.map(([x, n]) => `${esc(x.name)} (${n})`).join(' · ')}</p>` : ''}</div>`;
+}
+
 function timeline(limit) {
   const items = [...getState().audit].reverse().slice(0, limit);
   if (!items.length) return '<p class="muted">Noch keine Einträge.</p>';
@@ -121,15 +137,53 @@ function processSteps() {
   const steps = [
     ['PCN übernommen', s.inbox.some(m => m.kind === 'pcn')], ['Zuordnung bestätigt', s.change.confirmed], ['Auswirkung bewertet', s.impact.confirmed],
     ['Prüfauftrag', !!s.testOrder], ['R-04 Nachweis angenommen', s.risk.status === 'closed'], ['Keine offene Abweichung', !openDeviations().length && s.risk.status === 'closed'],
-    ['Partner bestätigt', s.partner.confirmed], ['Formales Paket', !!pkg], ['OEM-Annahme', !!pkg?.acceptance],
+    ['Pflichtpunkte belegt / ausgeschlossen', !openExclusions().length], ['Partner bestätigt', s.partner.confirmed], ['Formales Paket', !!pkg], ['OEM-Annahme', !!pkg?.acceptance],
     ['RA-Weg bestätigt', ['internal_confirmed', 'external_fulfilled'].includes(s.route.status)], ['OEM-Freigabe R2/B', !!s.release], ['Service-Zeitsprung', !!s.service],
   ];
   return `<ol class="steps">${steps.map(([l, ok]) => `<li class="${ok ? 'ok' : ''}"><i></i>${l}</li>`).join('')}</ol>`;
 }
 
 function preconfirmedList() {
-  return `<div class="preconf"><div class="preconf-head">VORBESTÄTIGT – NUR FÜR DEN BEGRENZTEN SYNTHETISCHEN DEMOFALL, KEINE TATSÄCHLICHE KONFORMITÄT</div>
-  <table class="tbl"><tbody>${PRECONFIRMED.map(p => `<tr><td>${p.id}</td><td>${esc(p.label)}</td><td>${badge('vorbestätigt (Demo)', 'neutral')}</td></tr>`).join('')}</tbody></table></div>`;
+  const rows = registerRows();
+  const n = st => rows.filter(r => r.status === st).length;
+  return `<div class="preconf"><div class="preconf-head">REGELREGISTER MDR ANHANG I – 23 ABSCHNITTE · VORBESTÄTIGTE PUNKTE GELTEN NUR FÜR DEN SYNTHETISCHEN DEMOFALL</div>
+  ${kv([['Nachweis (Nr. 20.1 → R-04)', rows.find(r => r.no === 20).status === 'nachweis' ? badge('belegt', 'ok') : badge('offen', 'bad')],
+    ['Vorbestätigt (Demo)', `${n('vorbestätigt')} Abschnitte`], ['Nicht anwendbar (begründet)', `${n('nicht anwendbar')} Abschnitte`],
+    ['Offen', `${openExclusions().length} Ausschlussvorschläge ohne QM-Bestätigung`]])}
+  <button class="link" data-act="goto" data-screen="matrix">Register in der Nachweismatrix öffnen</button></div>`;
+}
+
+const REG_TONE = { nachweis: 'ok', 'nicht anwendbar': 'neutral', vorbestätigt: 'neutral', offen: 'bad' };
+function registerCard() {
+  const ui = getUi(), filter = ui.regFilter || 'alle';
+  const rows = registerRows();
+  const shown = rows.filter(r => filter === 'alle' || r.status === filter || (filter === 'offen' && r.status === 'offen'));
+  const filters = [['alle', 'Alle'], ['offen', 'Offen'], ['nicht anwendbar', 'Nicht anwendbar'], ['vorbestätigt', 'Vorbestätigt'], ['nachweis', 'Nachweis']]
+    .map(([k, l]) => `<button class="${filter === k ? 'on' : ''}" data-act="reg-filter" data-filter="${k}">${l} (${k === 'alle' ? rows.length : rows.filter(r => r.status === k).length})</button>`).join('');
+  const body = shown.map(r => {
+    const key = `ex_${r.no}`;
+    let detail = '';
+    if (r.demo === 'r04') detail = `Nr. 20.1 → R-04 → PA-04 → ${acceptedReport() ? `${acceptedReport().id} v${acceptedReport().version}` : 'Nachweis offen'} <span class="muted small">(übrige Punkte von Nr. 20 vorbestätigt)</span>`;
+    else if (r.status === 'vorbestätigt') detail = '<span class="muted small">Nur für den synthetischen Demofall vorbestätigt – keine Konformitätsaussage.</span>';
+    else if (r.status === 'nicht anwendbar') detail = `${esc(r.exclusion.reason)}<div class="muted small">Bestätigt: ${esc(r.exclusion.by)}, ${fmt(r.exclusion.at)}</div>`;
+    else detail = `<div class="muted small">Ausschluss vorgeschlagen (Entwicklung). Fachliche Bestätigung mit Begründung erforderlich.</div>
+      ${textarea(key, r.na)}${btn('Ausschluss bestätigen', 'exclude-req', guards.excludeReq(r.no, F(key, r.na)), { data: { no: r.no }, small: true })}`;
+    return `<tr><td>${r.no}</td><td>${esc(r.title)}<div class="muted small">Kap. ${r.ch}</div></td><td>${badge(r.status, REG_TONE[r.status])}</td><td>${detail}</td></tr>`;
+  }).join('');
+  return card('Regelregister MDR Anhang I', `
+    <p class="muted small">Navigation über die 23 Abschnitte von Anhang I (Kurzbezeichnungen). Durchgängig bis zum Prüfnachweis verknüpft ist nur Nr. 20.1. Aus den Musterdaten wird keine vollständige Konformitätsbewertung abgeleitet.</p>
+    <div class="seg">${filters}</div>
+    <div class="table-scroll"><table class="tbl reg"><thead><tr><th>Nr.</th><th>Abschnitt</th><th>Status</th><th>Verknüpfung / Begründung</th></tr></thead><tbody>${body || '<tr><td colspan="4" class="muted">Keine Einträge für diesen Filter.</td></tr>'}</tbody></table></div>
+    ${openExclusions().length ? `<div class="row">${btn(`Alle ${openExclusions().length} Vorschläge mit ihrer Begründung bestätigen`, 'exclude-all', guards.excludeAll(), { kind: 'secondary' })}</div>` : ''}`);
+}
+
+function scenarioCard() {
+  const s = getState(), ui = getUi();
+  return card('Testdatensatz', `${Object.entries(SCENARIOS).map(([k, sc]) => `<div class="scenario ${s.scenario === k ? 'on' : ''}">
+      <strong>${esc(sc.label)}</strong> ${s.scenario === k ? badge('aktiv', 'ok') : ''}<p class="muted small">${esc(sc.text)}</p>
+      ${s.scenario === k ? '' : ui.confirmScenario === k
+        ? `<span class="confirm-reset">Demo mit diesem Datensatz neu starten? <button class="btn secondary sm danger" data-act="scenario-confirm" data-scenario="${k}">Neu starten</button> <button class="btn ghost sm" data-act="reset-cancel">Abbrechen</button></span>`
+        : `<button class="btn ghost sm" data-act="pick-scenario" data-scenario="${k}">Zu diesem Datensatz wechseln</button>`}</div>`).join('')}`);
 }
 
 export function screenAkte() {
@@ -158,7 +212,7 @@ export function screenAkte() {
         <p class="muted small">Geschlossen wird nur der Demo-Nachweispunkt R-04, nicht alle Produktrisiken.</p>
         ${preconfirmedList()}`)}
     </div>
-    ${card('Ablauf R2/B', processSteps())}`;
+    <div class="grid2">${card('Ablauf R2/B', processSteps())}${scenarioCard()}</div>`;
 }
 
 // ------------------------------------------------------------------ 2 Eingang
@@ -168,9 +222,10 @@ export function screenEingang() {
   const dupCount = s.deliveries.filter(d => d.messageId === m.messageId).length;
   const map = s.change.mapping;
   const posSel = F('mapPos', map?.position || '020');
-  const mapReasons = map ? guards.confirmMapping(posSel) : ['PCN-01 noch nicht übernommen.'];
+  const mapClar = s.clarifications.filter(c => c.kind === 'zuordnung');
   const task = s.tasks.find(t => t.kind === 'qm-r04');
   const artClar = s.clarifications.filter(c => c.kind === 'artikel');
+  const clarTable = list => `<table class="tbl"><tbody>${list.map(c => `<tr><td>${c.id}</td><td>${esc(c.article || c.source)}</td><td>${esc(c.reason)}${c.resolution ? `<div class="muted small">Geklärt: ${esc(c.resolution)}</div>` : ''}</td><td>${esc(c.owner || '')}</td><td>${badge(c.status, c.status === 'geklärt' ? 'ok' : 'warn')}</td></tr>`).join('')}</tbody></table>`;
 
   const inbox = card('Posteingang (simuliert)', `
     <div class="mail ${imported ? 'imported' : ''}">
@@ -186,15 +241,24 @@ export function screenEingang() {
       ${btn('Negativtest: unbekannter Artikel', 'deliver-unknown', guards.importPcn(), { kind: 'secondary' })}
     </div>
     <p class="muted small">Zustellungen: ${dupCount} · Vorgänge: ${imported ? 1 : 0} (Deduplizierung über Message-ID). Kein echter Mailzugang.</p>
-    ${artClar.length ? `<h4>Klärungsliste</h4><table class="tbl"><tbody>${artClar.map(c => `<tr><td>${c.id}</td><td>${esc(c.article)}</td><td>${esc(c.reason)}</td><td>${badge(c.status, 'warn')}</td></tr>`).join('')}</tbody></table>` : ''}`);
+    ${artClar.length ? `<h4>Klärungsliste</h4>${clarTable(artClar)}` : ''}`);
 
   const mapping = card('Zuordnung zur Stückliste', map ? `
     <div class="suggest"><span class="muted">Vorschlag (Regel):</span> ${esc(map.rule)}</div>
     ${kv([['Altartikel', map.old], ['Vorgeschlagener Nachfolger', map.proposed], ['Hinweis', 'PCN-01 schlägt B vor – keine Einbaufreigabe, keine Autorisierung.']])}
-    <label class="lbl">Position (bestätigen oder korrigieren)
-      <select class="inp" data-form="mapPos" data-rerender="1" ${s.change.confirmed ? 'disabled' : ''}>${src.bom.R1.map(r => `<option value="${r.position}" ${r.position === posSel ? 'selected' : ''}>${r.position} – ${r.article_id} ${esc(r.description)}</option>`).join('')}</select></label>
-    ${s.change.confirmed ? `<div class="done-note">Bestätigt durch ${esc(map.confirmedBy)}, ${fmt(map.at)} – Position ${map.position}${map.corrected ? ' (korrigiert)' : ''}</div>`
-      : btn('Zuordnung bestätigen', 'confirm-mapping', mapReasons, { data: { pos: posSel } })}` : '<p class="muted">Erst nach Übernahme einer Mitteilung.</p>');
+    ${kv([['Projekt / Variante', 'UL-01 / Standard'], ['Vorgeschlagene Position', `${map.position} (Stückliste R1)`]])}
+    ${s.change.confirmed ? `<div class="done-note">${map.corrected ? `Korrigiert von Position ${map.correctedFrom} auf ${map.position}: „${esc(map.correctionReason)}“<br>` : ''}Bestätigt durch ${esc(map.confirmedBy)}, ${fmt(map.at)} – Position ${map.position}. Der Änderungsfall liegt bei der Entwicklung.</div>`
+      : `${s.change.status === 'in_clarification' ? `<div class="evidence gap"><strong>In Klärung</strong><span>Die Zuordnung bleibt offen, bis sie bestätigt oder korrigiert wird.</span></div>` : ''}
+        <div class="row">${btn(`Zuordnung bestätigen (Pos. ${map.position})`, 'confirm-mapping', guards.confirmMapping())}</div>
+        <details class="sub" data-open-key="open_mapFix" ${F('open_mapFix') ? 'open' : ''}><summary>Zuordnung korrigieren</summary>
+          <label class="lbl">Richtige Position
+            <select class="inp" data-form="mapPos">${src.bom.R1.map(r => `<option value="${r.position}" ${r.position === posSel ? 'selected' : ''}>${r.position} – ${r.article_id} ${esc(r.description)}</option>`).join('')}</select></label>
+          <label class="lbl">Begründung der Korrektur${textarea('mapReason', '', 'z. B. Artikel ist laut Konstruktion an einer anderen Position verbaut')}</label>
+          ${btn('Korrektur speichern', 'correct-mapping', guards.correctMapping(posSel, F('mapReason')), { kind: 'secondary', small: true })}</details>
+        <details class="sub" data-open-key="open_mapClar" ${F('open_mapClar') ? 'open' : ''}><summary>Zuordnung unklar – Klärungsauftrag</summary>
+          <label class="lbl">Was ist unklar?${textarea('mapClarify', '', 'z. B. Meldung nennt keine Variante; MH-A könnte in mehreren Varianten verbaut sein')}</label>
+          ${btn('Klärungsauftrag anlegen', 'clarify-mapping', guards.clarifyMapping(F('mapClarify')), { kind: 'secondary', small: true })}</details>`}
+    ${mapClar.length ? `<h4>Klärungsaufträge Zuordnung</h4>${clarTable(mapClar)}` : ''}` : '<p class="muted">Erst nach Übernahme einer Mitteilung.</p>');
 
   const diff = card('Stücklistenvergleich R1 ↔ R2', `<div class="diff">
     <div><h4>R1 / historisch</h4>${bomTable(src.bom.R1, '020', src.bom.R2)}</div>
@@ -225,7 +289,7 @@ export function screenMatrix() {
   const ok = !!acc;
   const cmp = [['Revision', 'R2', found.revision], ['Hubantrieb', 'B', found.part], ['Artikel', 'MH-B', found.part === 'A' ? 'MH-A' : 'MH-B'], ['Dokumentstatus', 'Endfassung', found.document_status], ['Ergebnis', 'Bestanden', found.result], ['QM-Annahme', 'ja', acc ? 'ja' : 'nein']];
   const chain = [['Anforderung', 'MDR Anhang I 20.1', 'mechanische Risiken'], ['Risiko', 'R-04', 'Unbeabsichtigtes Absenken'], ['Schutzmaßnahme', 'Halteverhalten', 'unter Last'], ['Prüfanweisung', 'PA-04', 'Halteversuch'], ['Nachweis', ok ? `${acc.id} v${acc.version}` : 'fehlt für R2/B', ok ? 'angenommen' : 'gefunden: PB-17 (R1/A)']];
-  return `<div class="page-head"><h2>Nachweismatrix</h2><span class="muted">Fokus R-04 – keine vollständige MDR-Simulation</span></div>
+  return `<div class="page-head"><h2>Nachweismatrix</h2><span class="muted">Anforderung → Risiko → Schutzmaßnahme → Prüfanweisung → Bericht → Fachentscheid</span></div>
     ${card('Nachweiskette', `<div class="chain">${chain.map(([k, v, d], i) => `<div class="link-box ${i === 4 ? (ok ? 'ok' : 'gap') : ''}"><small>${k}</small><strong>${esc(v)}</strong><span>${esc(d)}</span></div>`).join('<span class="arrow">→</span>')}</div>
       <div class="row">${docBtn('documents/R-04_Risikomanagementauszug.pdf', 1, 'R-04 Risikomanagementauszug', 'R-04 Auszug')} ${docBtn('documents/PA-04_Pruefanweisung.pdf', 1, 'PA-04 Prüfanweisung', 'PA-04')} ${docBtn(found.file, 2, `${found.id} v${found.version} – geprüfte Konfiguration`, `${found.id} v${found.version}`)}</div>`)}
     <div class="grid2">
@@ -236,7 +300,7 @@ export function screenMatrix() {
         : `<div class="evidence gap"><strong>Warum der Nachweis nicht passt</strong><span>PB-17 ist eine gültige Endfassung mit „Bestanden“ – aber für R1 mit Hubantrieb A (Seite 2, „Geprüfte Konfiguration“). R2 verbaut Hubantrieb B (Pos. 020, PCN-01). Das Halteverhalten hängt vom Antrieb ab; der alte Bericht kann R-04 für R2/B daher nicht belegen. Benötigt: PB nach PA-04 für R2/B, Endfassung, Bestanden, von autorisiertem QM angenommen.</span></div>
           ${btn('Zu Prüfauftrag & Bericht', 'goto', [], { kind: 'secondary', data: { screen: 'pruefung' } })}`)}
     </div>
-    ${card('Übrige Demo-Anforderungen', preconfirmedList())}`;
+    ${registerCard()}`;
 }
 
 // ------------------------------------------------------------------ 4 Partner
@@ -329,17 +393,24 @@ export function screenPruefung() {
     return `<label class="pick ${pick === uid ? 'on' : ''}"><input type="radio" name="lab" value="${uid}" data-form="labPick" data-rerender="1" ${pick === uid ? 'checked' : ''}>
       <strong>${r.id} v${r.version}</strong><span>${r.revision}/${r.part} · ${r.document_status} · ${r.result}</span><small>${esc(r.file.split('/').pop())}${done ? ' · importiert' : ''}</small></label>`;
   }).join('');
+  const owners = PERSONS.filter(x => ['eng', 'qm1', 'qm2'].includes(x.id));
   const devs = s.deviations.map(d => {
-    const ck = `corr_${d.id}`, ek = `eff_${d.id}`;
+    const ck = `corr_${d.id}`, ek = `eff_${d.id}`, ro = `rwo_${d.id}`, rt = `rwt_${d.id}`, rd = `rwd_${d.id}`;
+    const rwF = { owner: F(ro, 'eng'), text: F(rt, 'Ursache des nicht bestandenen Halteversuchs klären, Haltebremse MH-B nacharbeiten, Prüfmuster neu aufbauen'), due: F(rd, addDays(d.at, 10)) };
     return `<article class="deviation ${d.status === 'geschlossen' ? 'closed' : ''}">
       <header><strong>${d.id}</strong> ${esc(d.title)} ${badge(d.status, d.status === 'geschlossen' ? 'ok' : 'bad')} ${d.status !== 'geschlossen' ? badge('blockiert Übergabe & Freigabe', 'bad') : ''}</header>
-      <div class="grid2 tight">
-        <div><h4>1 · Korrekturmaßnahme</h4>${d.correction ? `<div class="done-note">${esc(d.correction.text)}<br>${esc(d.correction.by)}, ${fmt(d.correction.at)}</div>`
+      <p class="muted small">Ablauf: offen → in Nacharbeit → Korrektur dokumentiert → Wirksamkeit geprüft → geschlossen</p>
+      <div class="grid3 tight">
+        <div><h4>1 · Nacharbeit zuweisen</h4>${d.rework ? `<div class="done-note">${esc(d.rework.owner)} · fällig ${esc(d.rework.due)}<br>${esc(d.rework.text)}<br><span class="muted">${esc(d.rework.by)}, ${fmt(d.rework.at)}</span></div>`
+          : `<label class="lbl">Verantwortlich<select class="inp" data-form="${ro}">${owners.map(o => `<option value="${o.id}" ${rwF.owner === o.id ? 'selected' : ''}>${esc(o.name)} – ${esc(o.title)}</option>`).join('')}</select></label>
+            <label class="lbl">Was ist nachzuarbeiten?${textarea(rt)}</label><label class="lbl">Fällig am${input(rd, rwF.due, '', 'date')}</label>
+            ${btn('Nacharbeit zuweisen', 'assign-rework', guards.assignRework(d, rwF), { data: { id: d.id }, small: true })}`}</div>
+        <div><h4>2 · Korrekturmaßnahme</h4>${d.correction ? `<div class="done-note">${esc(d.correction.text)}<br>${esc(d.correction.by)}, ${fmt(d.correction.at)}</div>`
           : `${textarea(ck, '', 'z. B. Haltebremse MH-B justiert, Prüfmuster neu aufgebaut')}${btn('Korrektur dokumentieren', 'dev-correction', guards.devCorrection(d, F(ck)), { data: { id: d.id }, small: true })}`}</div>
-        <div><h4>2 · Wirksamkeit & Abschluss</h4>${d.effectiveness ? `<div class="done-note">${esc(d.effectiveness.text)}<br>${esc(d.effectiveness.by)}, ${fmt(d.effectiveness.at)} · Bezug ${esc(d.effectiveness.evidence)}</div>`
+        <div><h4>3 · Wirksamkeit & Abschluss</h4>${d.effectiveness ? `<div class="done-note">${esc(d.effectiveness.text)}<br>${esc(d.effectiveness.by)}, ${fmt(d.effectiveness.at)} · Bezug ${esc(d.effectiveness.evidence)}</div>`
           : `${textarea(ek, '', 'z. B. Wiederholungsprüfung PB-18 v2.0 bestanden, Korrektur wirksam')}${btn('Wirksamkeit bestätigen & schließen', 'dev-close', guards.devClose(d, F(ek)), { data: { id: d.id }, small: true })}`}</div>
       </div>
-      <p class="muted small">Eine spätere positive Berichtsannahme schließt die Abweichung nicht automatisch.</p></article>`;
+      <p class="muted small">Eine spätere positive Berichtsannahme schließt die Abweichung nicht automatisch. Ein neuer Bericht ist eine eigene Version.</p></article>`;
   }).join('');
   return `<div class="page-head"><h2>Prüfauftrag & Bericht</h2><span>${s.risk.status === 'closed' ? badge('R-04 Nachweispunkt geschlossen', 'ok') : badge('R-04 offen', 'bad')} ${openDeviations().length ? badge(`${openDeviations().length} blockierende Abweichung(en)`, 'bad') : ''}</span></div>
     <div class="grid2">
@@ -381,13 +452,16 @@ export function screenUebergabe() {
   const pkg = currentPackage();
   const avail = certAvailable();
   const qDoc = F('qDoc', '04_PB-18 Prüfbericht');
-  const routeSel = F('route', s.route.status === 'unresolved' ? 'internal_confirmed' : s.route.status);
+  const routeDefault = s.route.status === 'unresolved' ? 'internal_confirmed' : s.route.status === 'external_required' ? 'external_fulfilled' : s.route.status;
+  const routeSel = F('route', routeDefault);
+  const exportErr = getUi().exportError;
+  const stale = pkg && !s.release && hash(evidenceSnapshot()) !== pkg.hash;
   const readiness = `<ul class="checks">
     ${CHECK(s.change.confirmed && s.impact.confirmed, 'Änderung bestätigt und bewertet')}
     ${CHECK(s.risk.status === 'closed', 'R-04: geeigneter Nachweis von QM angenommen')}
     ${CHECK(!openDeviations().length, 'Keine blockierenden Abweichungen', openDeviations().map(d => d.id).join(', '))}
     ${CHECK(s.partner.confirmed, 'Partner / Zertifikat bestätigt')}
-    ${CHECK(true, 'Übrige Pflichtpunkte', 'vorbestätigt nur für den Demofall')}
+    ${CHECK(!openExclusions().length, 'Übrige Pflichtpunkte MDR Anhang I belegt oder begründet ausgeschlossen', openExclusions().length ? `offen: Nr. ${openExclusions().map(r => r.no).join(', ')}` : 'vorbestätigte Punkte gelten nur für den Demofall')}
     ${CHECK(avail || s.certMode.sourceLinkOnly, 'Zertifikats-PDF lokal vorhanden', avail ? '' : s.certMode.sourceLinkOnly ? 'Quelllink-Prototypmodus aktiv' : 'fehlt')}
   </ul>`;
   const questions = s.questions.map(q => {
@@ -404,17 +478,27 @@ export function screenUebergabe() {
       ${card('Übergabebereitschaft', `${readiness}
         ${!avail ? `<div class="evidence gap"><strong>Zertifikats-PDF fehlt lokal</strong><span>Formale Übergabe gesperrt, bis die Datei ergänzt ist – oder ausdrücklich im Quelllink-Prototypmodus (keine vollständige Akte). Original: ${esc(src.certUrl)}</span></div>
           ${btn(s.certMode.sourceLinkOnly ? 'Quelllink-Prototypmodus deaktivieren' : 'Quelllink-Prototypmodus aktivieren', 'toggle-sourcelink', guards.toggleSourceLink(), { kind: 'secondary', small: true })}` : ''}
+        ${exportErr ? `<div class="evidence gap"><strong>${exportErr.kind === 'draft' ? 'Export' : 'Übergabe'} fehlgeschlagen</strong><span>${esc(exportErr.text)}. Es wurde nichts gespeichert; der Vorgang bleibt offen.</span></div>
+          <div class="row">${btn('Erneut versuchen', 'export-retry', [])}</div>` : ''}
+        ${stale ? `<div class="evidence gap"><strong>Nachweisstand geändert</strong><span>Seit ${pkg.id} hat sich der Nachweisstand geändert. Für Annahme und Freigabe ist ein neues Paket nötig; ${pkg.id} bleibt unverändert.</span></div>` : ''}
         <div class="row">
           ${btn('Arbeitsstand exportieren (mit Lückenliste)', 'export-draft', guards.exportDraft(), { kind: 'secondary' })}
-          ${btn(pkg ? 'Formales Paket erzeugen / bereitstellen' : 'Formales Paket erzeugen', 'export-formal', guards.exportFormal())}
+          ${btn(pkg ? 'Paket übergeben / erneut bereitstellen' : 'Paket übergeben', 'export-formal', guards.exportFormal())}
         </div>
+        <label class="switch"><input type="checkbox" data-act="toggle-export-error" ${s.tests.exportError ? 'checked' : ''}> Testschalter: Exportfehler simulieren</label>
         ${s.drafts.length ? `<h4>Arbeitsstände</h4><table class="tbl"><tbody>${s.drafts.map(d => `<tr><td>${d.id}</td><td>${badge('ARBEITSSTAND', 'warn')}</td><td>${d.gaps.length} Lücken</td><td>${fmt(d.at)}</td><td><button class="link" data-act="download-draft" data-id="${d.id}">ZIP</button></td></tr>`).join('')}</tbody></table>` : ''}`)}
       ${card('Regulatorischer Weg (RA)', `
-        ${kv([['Aktueller Status', badge(ROUTES[s.route.status], ['internal_confirmed', 'external_fulfilled'].includes(s.route.status) ? 'ok' : 'warn')]])}
+        ${kv([['Testdatensatz', esc(SCENARIOS[s.scenario].label)], ['Verfahrensstatus', badge(routeLabel(), ['internal_confirmed', 'external_fulfilled'].includes(s.route.status) ? 'ok' : 'warn')],
+          ...(s.route.classification ? [['Einordnung', esc(s.route.classification)], ['Beleg', esc(s.route.evidence)]] : [])])}
+        ${s.route.status === 'external_required' ? '<p class="muted small">Eine erforderliche Genehmigung braucht das Ergebnis der zuständigen Stelle; eine Mitteilung wird nach den einschlägigen Vorgaben erledigt. Bis dahin bleibt die Freigabe gesperrt.</p>' : ''}
+        ${s.release ? '<p class="muted small">Nach der Freigabe eingefroren.</p>' : `
         <label class="lbl">Neuer Status<select class="inp" data-form="route">${Object.entries(ROUTES).map(([k, v]) => `<option value="${k}" ${routeSel === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-        <label class="lbl">Dokumentierte Begründung${textarea('routeReason', '', 'z. B. Austausch gleichwertiger Komponente, Bewertung im Herstellerprozess; keine benannte Stelle erforderlich (Demo-Annahme Klasse I)')}</label>
-        ${btn('Status setzen', 'set-route', guards.setRoute(routeSel, F('routeReason')))}
-        ${s.route.history.length ? `<ol class="mini">${s.route.history.map(h => `<li>${fmt(h.at)} · ${esc(h.by)}: ${ROUTES[h.from]} → <strong>${ROUTES[h.to]}</strong> – ${esc(h.reason)}</li>`).join('')}</ol>` : ''}`)}
+        ${routeSel === 'external_required' ? `<label class="lbl">Art<select class="inp" data-form="routeKind"><option value="">– wählen –</option>${Object.entries(EXTERNAL_KIND).map(([k, v]) => `<option value="${k}" ${F('routeKind') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` : ''}
+        <label class="lbl">Regulatorische Einordnung${textarea('routeClass', s.scenario === 'external' ? 'Wesentliche Änderung – Genehmigung der zuständigen Stelle erforderlich (synthetische Annahme)' : 'Klasse I, Austausch einer gleichwertigen Komponente – Bewertung im Herstellerprozess (Demo-Annahme)')}</label>
+        <label class="lbl">Dokumentierte Begründung${textarea('routeReason', '', routeSel === 'external_fulfilled' ? 'z. B. Genehmigung der zuständigen Stelle liegt vor' : 'z. B. Änderung im Rahmen der bestehenden Konformitätsbewertung; keine benannte Stelle erforderlich')}</label>
+        <label class="lbl">${routeSel === 'external_fulfilled' ? 'Beleg: Ergebnis der zuständigen Stelle / Nachweis der Mitteilung' : 'Beleg'}${input('routeEvidence', '', routeSel === 'external_fulfilled' ? 'z. B. Bescheid-Nr. (simuliert)' : 'z. B. interne Bewertung RA-BW-01')}</label>
+        ${btn('Status setzen', 'set-route', guards.setRoute({ route: routeSel, kind: F('routeKind'), classification: F('routeClass'), reason: F('routeReason'), evidence: F('routeEvidence') }))}`}
+        ${s.route.history.length ? `<ol class="mini">${s.route.history.map(h => `<li>${fmt(h.at)} · ${esc(h.by)}: ${esc(routeLabel(h.from))} → <strong>${esc(routeLabel(h.to, h.kind))}</strong> – ${esc(h.reason)}${h.evidence ? ` <span class="muted">(Beleg: ${esc(h.evidence)})</span>` : ''}</li>`).join('')}</ol>` : ''}`)}
     </div>
     ${card('Übergabepakete', s.packages.length ? [...s.packages].reverse().map(packageCard).join('') : '<p class="muted">Noch kein formales Paket. Inhalt: Index-PDF, BOM R2, R-04 + Bewertungsvermerk, PA-04, angenommene PB-18-Version, QMS-Quelle, Anforderungsmatrix, Entscheidungsprotokoll. Ausgeschlossen: Entwürfe, abgelehnte Berichte, interne Notizen.</p>')}
     <div class="grid2">
@@ -427,19 +511,60 @@ export function screenUebergabe() {
         <label class="lbl">Frage${textarea('qText', '', 'z. B. Welche Prüflast wurde für R2/B angewendet?')}</label>
         ${btn('Rückfrage senden', 'ask-q', guards.askQuestion({ doc: qDoc, text: F('qText') }), { kind: 'secondary' })}`)}
       ${card('Separate OEM-Freigabe R2/B', s.release
-        ? `<div class="evidence ok"><strong>R2/B freigegeben durch ${esc(s.release.by)}</strong><span>${fmt(s.release.at)} · Basis ${s.release.packageId} (${s.release.hash}) · Weg: ${ROUTES[s.release.route]}<br>„${esc(s.release.reason)}“</span></div>
-          <p class="muted small">Herstellerentscheidung im Demofall – keine CE-Kennzeichnung, keine behördliche Zulassung. R1 bleibt unverändert.</p>`
-        : `<p class="muted small">Nur ein freigabeberechtigter OEM-Vertreter. Ein angenommenes Paket ist noch keine Freigabe.</p>
-          <label class="lbl">Begründung${textarea('releaseReason', '', 'z. B. P-01 geprüft, R-04 belegt, Weg intern bestätigt')}</label>
-          ${btn('R2/B freigeben', 'release', guards.release(F('releaseReason')))}
-          <p class="muted small">Keine CE-/Zulassungsaussage.</p>`)}
+        ? `<div class="evidence ok"><strong>Serienstand R2/B freigegeben durch ${esc(s.release.by)}</strong><span>${fmt(s.release.at)} · Basis ${s.release.packageId} (${s.release.hash}) · ${esc(routeLabel(s.release.route, s.release.routeKind))}</span></div>
+          ${kv([['EU-Konformitätserklärung', esc(s.release.doc)], ['Kennzeichnung', esc(s.release.label)], ['Betroffene Serienlose', esc(s.release.lots)], ['Begründung', esc(s.release.reason)]])}
+          <p class="muted small">Herstellerentscheidung im Demofall – keine CE-Kennzeichnung oder Zulassung durch den Prototyp. R1 und bereits ausgelieferte Geräte bleiben unverändert.</p>`
+        : `<p class="muted small">Eigene Herstelleraktion, nur für einen freigabeberechtigten OEM-Vertreter. Ein angenommenes Paket ist noch keine Freigabe. Im Klasse-I-Musterfall verantwortet BeispielMed die Konformität.</p>
+          <label class="lbl">Geltungsbereich der EU-Konformitätserklärung${textarea('relDoc', 'EU-Konformitätserklärung UL-01 / Standard um Revision R2 (Hubantrieb B) ergänzt (Demo)')}</label>
+          <label class="lbl">Kennzeichnung${textarea('relLabel', 'Typenschild und Etikett mit Revision R2 aktualisiert; Gebrauchsanweisung unverändert (Demo)')}</label>
+          <label class="lbl">Betroffene Serienlose${input('relLots', 'ab Serienlos L-2027-01', 'z. B. ab Serienlos L-2027-01')}</label>
+          <label class="lbl">Begründung${textarea('releaseReason', '', 'z. B. P-01 geprüft, R-04 belegt, Verfahrensstatus geklärt')}</label>
+          ${btn('Serienstand R2/B freigeben', 'release', guards.release({ doc: F('relDoc'), label: F('relLabel'), lots: F('relLots'), reason: F('releaseReason') }))}`)}
     </div>`;
 }
 
 // ------------------------------------------------------------------ 7 Service
+const SV_STEPS = ['eingegangen', 'zugeordnet', 'regulatorisch bewertet', 'nachverfolgt'];
+
 export function screenService() {
   const s = getState(), sv = s.service;
   const pkg = sv && s.packages.find(p => p.id === sv.packageId);
+  const as = sv?.assessment;
+  const duty = F('svDuty', '');
+  const repF = { serial: F('repSerial', sv?.serial || ''), part: F('repPart', sv ? `MH-${sv.part}` : ''), protocol: F('repProtocol', 'PP-SV01-01 Funktions- und Halteprüfung nach Instandsetzung'), tech: F('repTech', 'P. Wagner (Servicetechniker)'), controlDue: F('repDue', sv ? addDays(sv.simulatedNow, 365) : '') };
+  const caseCard = sv ? card('Servicefall SV-01', `
+      <ol class="steps inline">${SV_STEPS.map(st => `<li class="${SV_STEPS.indexOf(st) <= SV_STEPS.indexOf(sv.status) ? 'ok' : ''}"><i></i>${st}</li>`).join('')}</ol>
+      ${kv([['Meldung', 'Liege bleibt gelegentlich nicht auf eingestellter Höhe (Ursache nicht bestätigt, keine Aussage zu Personenschaden)'], ['Bezug', 'R-04 Unbeabsichtigtes Absenken'],
+        ['RA-Aufgabe', sv.raTask ? `${sv.raTask} · J. Krüger (RA)` : '–'],
+        ['Kenntnis OEM', sv.oemAwareAt ? `${fmt(sv.oemAwareSim)} (simuliert) · erfasst ${fmt(sv.oemAwareAt)} durch ${esc(sv.oemAwareBy)}` : '–'],
+        ['Prüffrist', sv.reviewDue ? `${sv.reviewDue} <span class="muted small">Hinweis: MDR Art. 87 nennt Meldefristen von höchstens 15 Tagen ab Kenntnis, in schweren Fällen kürzer. Die Bewertung trifft RA.</span>` : '–']])}
+      <div class="row">${btn('RA-Bewertungsaufgabe erstellen', 'create-ra', guards.createRaTask())}${btn('Kenntniszeitpunkt OEM erfassen', 'oem-aware', guards.oemAware(), { kind: 'secondary' })}</div>
+      <h4>Regulatorische Bewertung (RA)</h4>
+      ${as ? `${kv([['Meldepflicht', esc(as.duty)], ...(as.duty === 'ja' ? [['Adressat', esc(as.addressee)], ['Frist', esc(as.deadline)]] : []), ['Bewertung', esc(as.text)], ['Nächste Maßnahme', esc(as.next)], ['Bewertet', `${esc(as.by)}, ${fmt(as.at)}`]])}`
+        : `<div class="form-grid">
+          <label class="lbl">Meldepflicht<select class="inp" data-form="svDuty"><option value="">– beurteilen –</option><option value="nein" ${duty === 'nein' ? 'selected' : ''}>nein</option><option value="ja" ${duty === 'ja' ? 'selected' : ''}>ja</option></select></label>
+          ${duty === 'ja' ? `<label class="lbl">Adressat${input('svAddr', 'zuständige Behörde (Demo)')}</label><label class="lbl">Frist${input('svDeadline', sv.reviewDue || '', '', 'date')}</label>` : ''}
+        </div>
+        <label class="lbl">Fachliche Bewertung${textarea('svText', '', 'z. B. kein schwerwiegendes Vorkommnis; Trend zu R-04 beobachten')}</label>
+        <label class="lbl">Nächste Maßnahme${textarea('svNext', '', 'z. B. Gerät instand setzen, Halteverhalten prüfen, weitere Meldungen auswerten')}</label>
+        ${btn('Bewertung speichern', 'ra-assess', guards.raAssess({ duty, addressee: F('svAddr'), deadline: F('svDeadline'), text: F('svText'), next: F('svNext') }))}`}
+      ${as?.duty === 'ja' ? (sv.externalReport ? `<div class="done-note">Externe Meldung dokumentiert: ${esc(sv.externalReport.ref)} · ${esc(sv.externalReport.by)}, ${fmt(sv.externalReport.at)} (simuliert, kein Versand)</div>`
+        : `<label class="lbl">Externe Meldung (eigene Handlung, simuliert – kein Versand)${input('svRef', '', 'Referenz / Aktenzeichen')}</label>${btn('Externe Meldung dokumentieren', 'report-external', guards.reportExternal(F('svRef')), { kind: 'secondary', small: true })}`) : ''}
+      ${as ? (sv.followUp ? `<div class="done-note">Nachverfolgt: ${esc(sv.followUp.text)} · ${esc(sv.followUp.by)}, ${fmt(sv.followUp.at)}</div>`
+        : `<label class="lbl">Nachverfolgung${textarea('svFollow', '', 'z. B. Instandsetzung REP-01 erfolgt, keine weiteren Meldungen')}</label>${btn('Nachverfolgung dokumentieren', 'follow-up', guards.followUp(F('svFollow')), { kind: 'secondary', small: true })}`) : ''}
+      <p class="muted small">Keine automatische Behördenmeldung. Die Bewertung erfolgt fachlich durch OEM/RA.</p>`) : '';
+  const repairCard = sv?.opened ? card('Reparatur im Bestand', `
+      <p class="muted small">Eigener Servicevorgang für ein ausgeliefertes Gerät. Die Freigabe von R2/B für künftige Seriengeräte löst keinen Umbau bereits ausgelieferter Liegen aus.</p>
+      ${s.repairs.length ? `<table class="tbl"><thead><tr><th>Vorgang</th><th>Gerät</th><th>Ersatzteil</th><th>Prüfprotokoll</th><th>Fachperson</th><th>Nächste Kontrolle</th></tr></thead><tbody>${s.repairs.map(r => `<tr><td>${r.id}</td><td>${esc(r.serial)}<div class="muted small">${esc(r.maker)} · ${esc(r.build)}</div></td><td>${esc(r.part)}</td><td>${esc(r.protocol)}</td><td>${esc(r.tech)}</td><td>${esc(r.controlDue)}</td></tr>`).join('')}</tbody></table>`
+        : `<div class="form-grid">
+          <label class="lbl">Seriennummer${input('repSerial', repF.serial)}</label>
+          <label class="lbl">Herstellerangaben<input class="inp" value="BeispielMed (fiktiv) · UL-01 / Standard · ${sv.revision}/${sv.part}" disabled></label>
+          <label class="lbl">Ersatzteil<select class="inp" data-form="repPart">${['MH-B', 'MH-A'].map(a => `<option value="${a}" ${repF.part === a ? 'selected' : ''}>${a}${a === `MH-${sv.part}` ? ' (wie verbaut)' : ' (abweichend vom Baustand)'}</option>`).join('')}</select></label>
+          <label class="lbl">Nächste Kontrolle fällig${input('repDue', repF.controlDue, '', 'date')}</label>
+        </div>
+        <label class="lbl">Prüfprotokoll${input('repProtocol', repF.protocol)}</label>
+        <label class="lbl">Verantwortliche Fachperson${input('repTech', repF.tech)}</label>
+        ${btn('Reparatur dokumentieren', 'record-repair', guards.recordRepair(repF))}`}`) : '';
   return `<div class="page-head"><h2>Service & Verlauf</h2><span class="muted">Synthetischer Fall – keine Patientendaten, keine automatische Meldung, kein Retrofit</span></div>
     <div class="grid2">
       ${card('Synthetischer Zeitsprung', sv
@@ -447,13 +572,11 @@ export function screenService() {
         : `<p>Simuliert die Auslieferung von <strong>SN-DEMO-002</strong> (R2/B) mit dem tatsächlich angenommenen Paket dieses Durchlaufs und Lieferbezug LIEF-DEMO-002. Ausdrücklich zu aktivieren.</p>
           ${btn('Zeitsprung aktivieren', 'activate-service', guards.activateService())}`)}
       ${card('Seriennummernsuche', `<div class="row">${input('serial', '', 'Seriennummer, z. B. SN-DEMO-002')}<button class="btn secondary" data-act="search-serial">Suchen</button></div>
-        ${sv?.opened ? `<h4>Gebauter Zustand ${sv.serial}</h4>${kv([['Produkt', 'UL-01 / Standard'], ['Revision', `${sv.revision} / Hubantrieb ${sv.part} (MH-B, Pos. 020)`], ['Lieferbezug', sv.delivery], ['Akte', `${sv.packageId} · Snapshot ${pkg?.hash} ${badge(pkg?.status || '', 'neutral')}`], ['Freigabe', `${esc(s.release.by)}, ${fmt(s.release.at)}`]])}
+        ${sv?.opened ? `<h4>Gebauter Zustand ${sv.serial}</h4>${kv([['Produkt', 'UL-01 / Standard'], ['Revision', `${sv.revision} / Hubantrieb ${sv.part} (MH-B, Pos. 020)`], ['Lieferbezug', sv.delivery], ['Serienlos', esc(sv.lots || '–')], ['Akte', `${sv.packageId} · Snapshot ${pkg?.hash} ${badge(pkg?.status || '', 'neutral')}`], ['Freigabe', `${esc(s.release.by)}, ${fmt(s.release.at)}`]])}
           <div class="row"><button class="btn secondary sm" data-act="goto-pkg" data-id="${sv.packageId}">Akte ${sv.packageId} öffnen</button> ${docBtn(sv.source, 1, 'SV-01 Servicefall', 'SV-01 Servicefall')}</div>` : ''}`)}
     </div>
-    ${sv ? card('Servicefall SV-01', `
-      ${kv([['Meldung', 'Liege bleibt gelegentlich nicht auf eingestellter Höhe (Ursache nicht bestätigt, keine Aussage zu Personenschaden)'], ['Bezug', 'R-04 Unbeabsichtigtes Absenken'], ['RA-Aufgabe', sv.raTask ? `${sv.raTask} ${badge('offen', 'warn')}` : '–'], ['Kenntnis OEM', sv.oemAwareAt ? `${fmt(sv.oemAwareSim)} (simuliert) · erfasst ${fmt(sv.oemAwareAt)} durch ${esc(sv.oemAwareBy)}` : '–']])}
-      <div class="row">${btn('RA-Bewertungsaufgabe erstellen', 'create-ra', guards.createRaTask())}${btn('Kenntniszeitpunkt OEM erfassen', 'oem-aware', guards.oemAware(), { kind: 'secondary' })}</div>
-      <p class="muted small">Keine automatische Behördenmeldung. Die Bewertung erfolgt fachlich durch OEM/RA außerhalb des Prototyps.</p>`) : ''}
+    ${caseCard}
+    ${repairCard}
     ${card('Audit-Trail (vollständig)', timeline())}`;
 }
 
