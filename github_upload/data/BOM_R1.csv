@@ -1,0 +1,5 @@
+﻿product_id,variant,revision,position,article_id,description,quantity,supplier,revision_status
+UL-01,Standard,R1,010,FRAME-01,Grundrahmen,1,Musterbetrieb,historically_released
+UL-01,Standard,R1,020,MH-A,Hubantrieb A,1,MusterHub,historically_released
+UL-01,Standard,R1,030,CTRL-01,Steuerung,1,Musterbetrieb,historically_released
+UL-01,Standard,R1,040,TOP-01,Liegefläche,1,Musterbetrieb,historically_released

@@ -1,0 +1,5 @@
+﻿product_id,variant,revision,position,article_id,description,quantity,supplier,revision_status
+UL-01,Standard,R2,010,FRAME-01,Grundrahmen,1,Musterbetrieb,planned
+UL-01,Standard,R2,020,MH-B,Hubantrieb B,1,MusterHub,planned
+UL-01,Standard,R2,030,CTRL-01,Steuerung,1,Musterbetrieb,planned
+UL-01,Standard,R2,040,TOP-01,Liegefläche,1,Musterbetrieb,planned

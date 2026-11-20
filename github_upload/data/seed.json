@@ -1,0 +1,232 @@
+{
+  "demo_only": true,
+  "as_of": "2026-11-27",
+  "product": {
+    "id": "UL-01",
+    "name": "Untersuchungsliege",
+    "variant": "Standard",
+    "market": "DE",
+    "manufacturer": "BeispielMed Systeme GmbH (fiktiv)",
+    "classification_assumption": "ordinary Class I for demo only",
+    "revisions": [
+      {
+        "id": "R1",
+        "part": "A",
+        "article": "MH-A",
+        "status": "historically_released",
+        "bom": "data/BOM_R1.csv"
+      },
+      {
+        "id": "R2",
+        "part": "B",
+        "article": "MH-B",
+        "status": "planned",
+        "bom": "data/BOM_R2.csv"
+      }
+    ]
+  },
+  "partners": [
+    {
+      "id": "OEM",
+      "name": "BeispielMed Systeme GmbH",
+      "address": "Panoramastraße 12, 12345 Musterstadt",
+      "synthetic": true
+    },
+    {
+      "id": "ERGO-MAIN",
+      "name": "Ergo-Tec GmbH",
+      "address": "Gewerbestraße 2, 91489 Wilhelmsdorf",
+      "demo_activity": "Fertigung"
+    },
+    {
+      "id": "ERGO-STORE",
+      "name": "Ergo-Tec GmbH",
+      "address": "Industriestraße 6, 91489 Wilhelmsdorf",
+      "demo_activity": "Lagerung"
+    },
+    {
+      "id": "SUP",
+      "name": "MusterHub Antriebstechnik GmbH",
+      "address": "Spindelweg 8, 12345 Musterstadt",
+      "synthetic": true
+    }
+  ],
+  "change": {
+    "id": "PCN-01",
+    "old_article": "MH-A",
+    "proposed_article": "MH-B",
+    "position": "020",
+    "status": "received",
+    "source": "documents/PCN-01_Lieferantenmitteilung.pdf",
+    "attachment": "documents/DB-B_Datenblatt.pdf"
+  },
+  "risk": {
+    "id": "R-04",
+    "requirement": "MDR Annex I 20.1",
+    "hazard": "Unbeabsichtigtes Absenken",
+    "measure": "Ausreichendes Halteverhalten",
+    "expected_revision": "R2",
+    "expected_part": "B",
+    "status": "open",
+    "instruction": "PA-04",
+    "old_report": "PB-17",
+    "evidence_page": 2
+  },
+  "reports": [
+    {
+      "id": "PB-17",
+      "version": "1.0",
+      "revision": "R1",
+      "part": "A",
+      "document_status": "Endfassung",
+      "result": "Bestanden",
+      "file": "documents/PB-17_R1-A_Endfassung.pdf",
+      "evidence_page": 2
+    },
+    {
+      "id": "PB-18",
+      "version": "0.1",
+      "revision": "R2",
+      "part": "B",
+      "document_status": "Entwurf",
+      "result": "Offen",
+      "file": "documents/PB-18_R2-B_Entwurf.pdf",
+      "evidence_page": 2
+    },
+    {
+      "id": "PB-18",
+      "version": "1.0",
+      "revision": "R2",
+      "part": "B",
+      "document_status": "Endfassung",
+      "result": "Nicht bestanden",
+      "file": "documents/PB-18_R2-B_Negativ.pdf",
+      "evidence_page": 2
+    },
+    {
+      "id": "PB-18",
+      "version": "2.0",
+      "revision": "R2",
+      "part": "B",
+      "document_status": "Endfassung",
+      "result": "Bestanden",
+      "file": "documents/PB-18_R2-B_Positiv.pdf",
+      "evidence_page": 2
+    }
+  ],
+  "certificates": [
+    {
+      "id": "Q-25-23375",
+      "standard": "ISO 9001",
+      "site": "ERGO-MAIN",
+      "scope": "Sondermaschinen und Standardkomponenten für Maschinenbau",
+      "from": "2025-04-01",
+      "to": "2028-03-31",
+      "page": 1,
+      "url": "https://et-medical.eu/wp-content/uploads/2025/05/Zertifikate_13485-9001_D-ENG_zusammen_2025-2028.pdf"
+    },
+    {
+      "id": "Z-25-014-S",
+      "standard": "ISO 13485",
+      "site": "ERGO-MAIN",
+      "scope": "Patienten-Positioniersysteme: Entwicklung, Produktion, Handel, Vertrieb",
+      "additional_site": {
+        "id": "ERGO-STORE",
+        "scope": "Lagerung von Patienten-Positioniersystemen"
+      },
+      "from": "2025-04-01",
+      "to": "2028-03-31",
+      "page": 3,
+      "url": "https://et-medical.eu/wp-content/uploads/2025/05/Zertifikate_13485-9001_D-ENG_zusammen_2025-2028.pdf"
+    }
+  ],
+  "documents": [
+    {
+      "id": "PCN-01",
+      "version": "1.0",
+      "file": "documents/PCN-01_Lieferantenmitteilung.pdf",
+      "pages": 1,
+      "synthetic": true
+    },
+    {
+      "id": "DB-B",
+      "version": "1.0",
+      "file": "documents/DB-B_Datenblatt.pdf",
+      "pages": 1,
+      "synthetic": true
+    },
+    {
+      "id": "R-04",
+      "version": "1.0",
+      "file": "documents/R-04_Risikomanagementauszug.pdf",
+      "pages": 1,
+      "synthetic": true
+    },
+    {
+      "id": "PA-04",
+      "version": "1.0",
+      "file": "documents/PA-04_Pruefanweisung.pdf",
+      "pages": 1,
+      "synthetic": true
+    },
+    {
+      "id": "PB-17",
+      "version": "1.0",
+      "file": "documents/PB-17_R1-A_Endfassung.pdf",
+      "pages": 2,
+      "synthetic": true
+    },
+    {
+      "id": "PB-18",
+      "version": "0.1",
+      "file": "documents/PB-18_R2-B_Entwurf.pdf",
+      "pages": 2,
+      "synthetic": true
+    },
+    {
+      "id": "PB-18",
+      "version": "1.0",
+      "file": "documents/PB-18_R2-B_Negativ.pdf",
+      "pages": 2,
+      "synthetic": true
+    },
+    {
+      "id": "PB-18",
+      "version": "2.0",
+      "file": "documents/PB-18_R2-B_Positiv.pdf",
+      "pages": 2,
+      "synthetic": true
+    },
+    {
+      "id": "SV-01",
+      "version": "1.0",
+      "file": "documents/SV-01_Servicefall.pdf",
+      "pages": 1,
+      "synthetic": true
+    }
+  ],
+  "initial_state": {
+    "change_confirmed": false,
+    "impact_reviewed": false,
+    "test_ordered": false,
+    "selected_report": null,
+    "risk_evidence_accepted": false,
+    "blocking_deviation": null,
+    "partner_confirmed": false,
+    "other_demo_requirements": "preconfirmed_demo_only",
+    "regulatory_route": "unresolved",
+    "packages": [],
+    "release": null,
+    "service": null
+  },
+  "service_fixture": {
+    "id": "SV-01",
+    "serial": "SN-DEMO-002",
+    "revision": "R2",
+    "part": "B",
+    "delivery_ref": "LIEF-DEMO-002",
+    "package_ref": "use actual accepted package ID from successful run",
+    "source": "documents/SV-01_Servicefall.pdf",
+    "activate_only_after_release": true
+  }
+}
